@@ -33,7 +33,6 @@ var/global/photo_count = 0
 	var/icon/img	//Big photo image
 	var/scribble	//Scribble on the back.
 	var/icon/tiny
-	var/photo_size = 3
 
 /obj/item/weapon/photo/New()
 	id = photo_count++
@@ -56,12 +55,12 @@ var/global/photo_count = 0
 		user << "<span class='notice'>It is too far away.</span>"
 
 /obj/item/weapon/photo/proc/show(mob/user as mob)
-	user << browse_rsc(img, "tmp_photo_[id].png")
+	user << browse_rsc(img, "tmp_photo.png")
 	user << browse(sanitize_local("<html><head><title>[name]</title></head>" \
 		+ "<body style='overflow:hidden;margin:0;text-align:center'>" \
-		+ "<img src='tmp_photo_[id].png' width='[64*photo_size]' style='-ms-interpolation-mode:nearest-neighbor' />" \
+		+ "<img src='tmp_photo.png' width='192' style='-ms-interpolation-mode:nearest-neighbor' />" \
 		+ "[scribble ? "<br>Written on the back:<br><i>[scribble]</i>" : ""]"\
-		+ "</body></html>", "window=book;size=[64*photo_size]x[scribble ? 400 : 64*photo_size]", SANITIZE_BROWSER))
+		+ "</body></html>", "window=book;size=192x[scribble ? 400 : 192]", SANITIZE_BROWSER))
 	onclose(user, "[name]")
 	return
 
@@ -133,15 +132,7 @@ var/global/photo_count = 0
 	var/icon_on = "camera"
 	var/icon_off = "camera_off"
 	var/size = 3
-/* LAGSHIT
-/obj/item/device/camera/verb/change_size()
-	set name = "Set Photo Focus"
-	set category = "Object"
-	var/nsize = input("Photo Size","Pick a size of resulting photo.") as null|anything in list(1,3,5,7)
-	if(nsize)
-		size = nsize
-		usr << "<span class='notice'>Camera will now take [size]x[size] photos.</span>"
-*/
+
 /obj/item/device/camera/attack(mob/living/carbon/human/M as mob, mob/user as mob)
 	return
 
@@ -166,24 +157,72 @@ var/global/photo_count = 0
 		return
 	..()
 
+/obj/item/device/camera/proc/camera_get_icon(list/turfs, turf/center)
+	var/atoms[] = list()
+	for(var/turf/T in turfs)
+		atoms.Add(T)
+		for(var/atom/movable/A in T)
+			if(A.invisibility)
+				continue
+			atoms.Add(A)
 
-/obj/item/device/camera/proc/get_mobs(turf/the_turf as turf)
+	var/list/sorted = list()
+	var/j
+	for(var/i = 1 to atoms.len)
+		var/atom/c = atoms[i]
+		for(j = sorted.len, j > 0, --j)
+			var/atom/c2 = sorted[j]
+			if(c2.layer <= c.layer)
+				break
+		sorted.Insert(j+1, c)
+
+	var/icon/res = icon('icons/effects/96x96.dmi', "")
+
+	for(var/atom/A in sorted)
+		var/icon/img = getFlatIcon(A)
+
+		/*
+		FixIt Add "lying" *cry*
+		if(istype(A, /mob/living) && A:lying)
+			img.Turn(A:lying_current)
+		*/
+
+		var/offX = 32 * (A.x - center.x) + A.pixel_x + 33
+		var/offY = 32 * (A.y - center.y) + A.pixel_y + 33
+		if(istype(A, /atom/movable))
+			offX += A:step_x
+			offY += A:step_y
+
+		res.Blend(img, blendMode2iconMode(A.blend_mode), offX, offY)
+
+	for(var/turf/T in turfs)
+		res.Blend(getFlatIcon(T.loc), blendMode2iconMode(T.blend_mode), 32 * (T.x - center.x) + 33, 32 * (T.y - center.y) + 33)
+
+	return res
+
+/obj/item/device/camera/proc/camera_get_mobs(turf/the_turf)
 	var/mob_detail
-	for(var/mob/living/carbon/A in the_turf)
-		if(A.invisibility) continue
-		var/holding = null
-		if(A.l_hand || A.r_hand)
-			if(A.l_hand) holding = "They are holding \a [A.l_hand]"
-			if(A.r_hand)
-				if(holding)
-					holding += " and \a [A.r_hand]"
-				else
-					holding = "They are holding \a [A.r_hand]"
+	for(var/mob/M in the_turf)
+		if(M.invisibility)
+			continue
 
-		if(!mob_detail)
-			mob_detail = "You can see [A] on the photo[A:health < 75 ? " - [A] looks hurt":""].[holding ? " [holding]":"."]. "
-		else
-			mob_detail += "You can also see [A] on the photo[A:health < 75 ? " - [A] looks hurt":""].[holding ? " [holding]":"."]."
+		var/holding = null
+
+		if(istype(M, /mob/living))
+			var/mob/living/L = M
+			if(L.l_hand || L.r_hand)
+				if(L.l_hand) holding = "They are holding \a [L.l_hand]"
+				if(L.r_hand)
+					if(holding)
+						holding += " and \a [L.r_hand]"
+					else
+						holding = "They are holding \a [L.r_hand]"
+
+			if(!mob_detail)
+				mob_detail = "You can see [L] on the photo[L.health < 75 ? " - [L] looks hurt":""].[holding ? " [holding]":"."]. "
+			else
+				mob_detail += "You can also see [L] on the photo[L.health < 75 ? " - [L] looks hurt":""].[holding ? " [holding]":"."]."
+
 	return mob_detail
 
 /obj/item/device/camera/afterattack(atom/target as mob|obj|turf|area, mob/user as mob, flag)
@@ -213,30 +252,23 @@ var/global/photo_count = 0
 	return can_see
 
 /obj/item/device/camera/proc/captureimage(atom/target, mob/living/user, flag)
-	var/x_c = target.x - (size-1)/2
-	var/y_c = target.y + (size-1)/2
-	var/z_c	= target.z
 	var/mobs = ""
-	for(var/i = 1; i <= size; i++)
-		for(var/j = 1; j <= size; j++)
-			var/turf/T = locate(x_c, y_c, z_c)
-			if(user.can_capture_turf(T))
-				mobs += get_mobs(T)
-			x_c++
-		y_c--
-		x_c = x_c - size
+	var/list/turfs = list()
+	for(var/turf/T in range(1, target))
+		if(user.can_capture_turf(T))
+			turfs += T
+			mobs += camera_get_mobs(T)
 
-	var/obj/item/weapon/photo/p = createpicture(target, user, mobs, flag)
+	var/icon/temp = icon('icons/effects/96x96.dmi',"")
+	temp.Blend("#000", ICON_OVERLAY)
+	temp.Blend(camera_get_icon(turfs, target), ICON_OVERLAY)
+
+	var/obj/item/weapon/photo/p = createpicture(user, temp, mobs, flag)
 	printpicture(user, p)
 
-/obj/item/device/camera/proc/createpicture(atom/target, mob/user, mobs, flag)
-	var/x_c = target.x - (size-1)/2
-	var/y_c = target.y - (size-1)/2
-	var/z_c	= target.z
-	var/icon/photoimage = generate_image(x_c, y_c, z_c, size, CAPTURE_MODE_REGULAR, user)
-
-	var/icon/small_img = icon(photoimage)
-	var/icon/tiny_img = icon(photoimage)
+/obj/item/device/camera/proc/createpicture(mob/user, icon/temp, mobs, flag)
+	var/icon/small_img = icon(temp)
+	var/icon/tiny_img = icon(temp)
 	var/icon/ic = icon('icons/obj/items.dmi',"photo")
 	var/icon/pc = icon('icons/obj/bureaucracy.dmi', "photo")
 	small_img.Scale(8, 8)
@@ -244,22 +276,20 @@ var/global/photo_count = 0
 	ic.Blend(small_img,ICON_OVERLAY, 10, 13)
 	pc.Blend(tiny_img,ICON_OVERLAY, 12, 19)
 
-	var/obj/item/weapon/photo/p = new()
-	p.name = "photo"
-	p.icon = ic
-	p.tiny = pc
-	p.img = photoimage
-	p.desc = mobs
-	p.pixel_x = rand(-10, 10)
-	p.pixel_y = rand(-10, 10)
-	p.photo_size = size
+	var/obj/item/weapon/photo/P = new()
+	P.icon = ic
+	P.tiny = pc
+	P.img = temp
+	P.desc = mobs
+	P.pixel_x = rand(-10, 10)
+	P.pixel_y = rand(-10, 10)
 
-	return p
+	return P
 
-/obj/item/device/camera/proc/printpicture(mob/user, obj/item/weapon/photo/p)
-	p.loc = user.loc
+/obj/item/device/camera/proc/printpicture(mob/user, var/obj/item/weapon/photo/P)
+	P.loc = user.loc
 	if(!user.get_inactive_hand())
-		user.put_in_inactive_hand(p)
+		user.put_in_inactive_hand(P)
 
 /obj/item/weapon/photo/proc/copy(var/copy_id = 0)
 	var/obj/item/weapon/photo/p = new/obj/item/weapon/photo()
@@ -271,7 +301,6 @@ var/global/photo_count = 0
 	p.desc = desc
 	p.pixel_x = pixel_x
 	p.pixel_y = pixel_y
-	p.photo_size = photo_size
 	p.scribble = scribble
 
 	if(copy_id)
